@@ -58,64 +58,76 @@ var server = http.createServer(app).listen(app.get('port'), function(){
 var io = socketio.listen(server);
 app.use(midi(io));
 
+var keywords = [];
+
 function startStream(keywords)
 {
+    if (twit.readable) {
+        twit.currentTwitStream.destroy();
+    }
     var input = {};
     input['track'] = keywords;
     twit.stream('statuses/filter', input , function(stream) {
         stream.on('data', function (data) {
+                try {
                 //console.log(data);
-                //var updated = createWebPageThumbs(data);
+                var updated = createWebPageThumbs(data);
                 
                 for (var i = 0, len = keywords.length; i < len; i++)  {
                     if (data.text.indexOf(keywords[i]) != -1) {
                         console.log("found " + keywords[i]);
+                        var tosend = {};
+                        tosend[keywords[i]] = updated;
+                        io.sockets.emit('tweet', tosend);
                     }
                 }
-               // var tosend = {};
-                //tosend[string] = data;
-                //io.sockets.emit('tweet', tosend);
+                } catch (err) {
+                    console.log("Error:", err)
+                }         
         });
-        
+        twit.currentTwitStream = stream;
+       
     });
 }
-
-var keywords = ["baseball", "football"];
-startStream(keywords);
 
 
 
 function createWebPageThumbs(result) {
         var urls = result['entities']['urls'];
-        if (urls.length >= 1) {
+            if (urls.length >= 1) {
                     console.log(urls[0]['expanded_url'])
                     var url = urls[0]['expanded_url']
                     var fname = uuid.v1();
                     thumbnailer.fromUrl(url,  __dirname + '/public/thumbs/' + fname + '.png', 
-                        {viewport: { width: 1024, height: 768 }},function(error, thumbnail) {
+                        {viewport: { width: 800, height: 600 }},function(error, thumbnail) {
                         if (error) {
                             console.dir(error);
                         }
                     });
                 }
-                result.thumb_url = '/public/thumbs/' + fname + '.png';
-                return result;
+        result.thumb_url = '/public/thumbs/' + fname + '.png';
+        return result;
 }
 
 app.get('/load', function(req, res) {
         var qstr = req.query.search;
+        keywords.push(qstr);
         console.log('load... ' + req.query.search);
         twit.search(qstr, {'include_entities':'true','result_type':'recent','count':'40'}, function(err, response) {
-            
-            var results = response.statuses;
-            for (var i = results.length - 1; i > 0; i--) {
-                //console.log(results[i].text);
-                var updated = createWebPageThumbs(results[i]);
-                var tosend = {};
-                tosend[qstr] = updated;
-                io.sockets.emit('tweet', tosend);
+            try {
+                var results = response.statuses;
+                for (var i = results.length - 1; i > 0; i--) {
+                    //console.log(results[i].text);
+                    var updated = createWebPageThumbs(results[i]);
+                    var tosend = {};
+                    tosend[qstr] = updated;
+                    io.sockets.emit('tweet', tosend);
             }
+            } catch (err) {
+                    console.log("Error:", err)
+            }  
         });
+        startStream(keywords);
 });
 
 
