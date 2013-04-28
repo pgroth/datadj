@@ -1,0 +1,443 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title></title>
+  <link href="/public/css/bootstrap.min.css" rel="stylesheet" media="screen">
+</head>
+<body> 
+    <script src="/public/js/jquery-1.7.1.js"></script>
+    <script src="/public/js/underscore-min.js"></script>
+    <script src="/public/js/backbone-min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/midi.io/midi.io.js"></script>
+    <script src="/public/js/holder.js"></script>
+    <script src="/public/js/bootstrap.min.js"></script>
+
+  <script>
+    var devices = new MidiDevices();
+    var socket = io.connect('/');
+    var msgsBySrc = {};
+    var srcPositions = {};
+    var DISPLAY_SIZE = 10;
+    var HIGHLIGHT_POS = 2;
+    var highlight_mode = false;
+    var stream_mode = true;
+    var selected_source = null;
+    var src_string_to_icon_id = {};
+    var src_string_to_icon_id_num = 0;
+    
+    
+    function load(string) {
+       
+        var id = 'srcicon' + src_string_to_icon_id_num;
+        src_string_to_icon_id[string] = id;
+        $("#sources").append("<li class='label' id='" + id + "'>" + string + "</li>");
+        src_string_to_icon_id_num = src_string_to_icon_id_num + 1;
+        srcPositions[string] = 0;
+        msgsBySrc[string] = [];
+        
+        $.get('/load', { search: string}, function(data) {
+            console.log('called load');
+        });
+        
+        
+    }
+    
+    // get all active midi devices
+    devices.fetch({
+        success: function() {
+            console.log('found devices', devices.models);
+        }
+    });
+    
+    var buildup = 0;
+    var builddown = 0;
+    // log all midi events for all devices
+    devices.on('midi', function(msg) {
+        console.log('got midi', msg);
+        //large right wheel
+        if (msg[1] == 25) {
+            if (msg[2] > 100) {
+                if (buildup > 3){
+                    up();
+                    buildup = 0;
+                } else {
+                    buildup = buildup + 1;
+                }    
+            } else {
+                if (builddown > 3) {
+                    down();
+                    builddown = 0;
+                } else {
+                    builddown = builddown + 1;
+                }
+            }
+        }
+        
+        //set cue left
+        if (msg[1] == 59 && msg[2] == 0) {
+            toggleHighlightMode();
+            highlight();
+        }
+        
+        //cur || left
+        if (msg[1] == 51 && msg[2] == 0) {
+            addEntryToDisplay();
+        }
+        
+        //play right
+        if (msg[1] == 76 && msg[2] == 0) {
+            $("#display").carousel('cycle');
+        }
+        
+        //cue || right
+        if (msg[1] == 60 && msg[2] == 0) {
+            $("#display").carousel('pause');
+        }
+        
+        //pitch blend -
+        if (msg[1] == 69 && msg[2] == 0) {
+            remove();
+        }
+        
+        //track
+        if (msg[1] == 26) {
+            if (msg[2] == 1) {
+             goToNextSource();
+            }
+        }
+        
+        //large  wheel left
+        if (msg[1] == 24) {
+            if (msg[2] > 100) {
+                popoverMove('prev');
+            } else {
+              popoverMove('next');
+            }
+        }  
+            
+    });
+  
+    socket.on('tweet', function(msg) {
+        console.log("--incoming---");
+        console.log(msg);
+        var key = Object.keys(msg)[0];
+        
+        msgsBySrc[key].unshift(msg[key]);      
+        /*if (selected_source === null) {
+            console.log("source is null");
+            selected_source = key;
+            $("#" + src_string_to_icon_id[key]).addClass('label-success');
+        }*/
+        
+        if (stream_mode && (selected_source == key)) {
+            render();
+        }
+    });
+    
+    function toggleStreamMode() {
+        if (stream_mode) {
+            stream_mode = false;
+        } else {
+            stream_mode = true;
+        }
+    }
+    
+    function toggleHighlightMode(){
+         if (highlight_mode) {
+            highlight_mode = false;
+        } else {
+            highlight_mode = true;
+        }
+    }
+    
+    function highlight() {
+        var res = $('#stream').children('.active');
+        if (highlight_mode) {
+            res.popover('show');  
+        } else {
+            res.popover('hide');
+        }
+    }
+    
+    function getSelectedSource() {
+       return msgsBySrc[selected_source];
+    }
+    
+    function getCurrentPosition() {
+        return srcPositions[selected_source];
+    }
+    
+    function incPos()  {
+        return srcPosition[selected_source] = srcPosition[selected_source] + 1;
+    }
+    
+    function decPos()  {
+        return srcPosition[selected_source] = srcPosition[selected_source] - 1;
+    }
+    
+    function goToNextSource() {
+       var srcs = Object.keys(msgsBySrc);
+       var i = srcs.indexOf(selected_source);
+       console.log("#" + src_string_to_icon_id[selected_source])
+       $("#" + src_string_to_icon_id[selected_source]).removeClass('label-success');
+       if (i < (srcs.length-1)) {
+            selected_source = srcs[i+1]
+       } else {
+            selected_source = srcs[0];
+       }
+       $("#" + src_string_to_icon_id[selected_source]).addClass('label-success');
+       render();
+    }
+    
+    function render() {
+    
+        $("#stream").empty();
+        
+        var messages = getSelectedSource();
+        //console.log(messages);
+        
+        var current = getCurrentPosition();
+        var active = current + HIGHLIGHT_POS
+              
+        var len = current + DISPLAY_SIZE
+        for (var i = current; i < len; i++) {
+            //console.log(i);
+            if (i >= 0) {
+                var e = createEntry(messages[i]);
+                //console.log(i + " "  + messages[i].text );
+                if (i == active) {
+                    e.addClass('active');
+                }
+                $("#stream").append(e);
+            } else {
+                $("#stream").append($("<li'><a href='#'><div class='media'> \
+                              <img class='pull-left media-object' src='/public/img/blank.png'> \
+                              <div class='media-head'></div> \
+                              <div class='media-body'></div> \
+                              </div></a></li>"));
+            }
+        }
+        highlight();
+     
+    } 
+    
+    function createEntry(msg)
+    {
+        console.log(msg);
+        $newEntry = $("<li data-title='" + msg.user.screen_name + "'><a href='#'><div class='media'> \
+                              <img class='pull-left media-object' src='" + msg.user.profile_image_url + "'> \
+                              <div class='media-head'>" + msg.created_at + "</div> \
+                              <div class='media-body'>" + msg.text + "</div> \
+                              </div></a></li>");
+        $newEntry.popover({trigger : "manuel", html : true, placement : "bottom", content : function () { return contentExtractor(msg)}});
+        return $newEntry;
+    }
+    
+    function contentExtractor(msg) {
+        var divid = "popover" + msg.id_str;
+        
+        var content = '<div id="' + divid + '" data-interval="false" class="carousel slide"> \
+          <ol class="carousel-indicators"> \
+            <li data-target="#' + divid + '" data-slide-to="0" class="active"></li> \
+            <li data-target="#' + divid + '" data-slide-to="1" class="active"></li> \
+          </ol>';
+            
+        content = content + '<div class="carousel-inner"> <div class="item active">';
+            for (var i = 0, len = msg.entities.hashtags.length; i < len; i++) {
+                content = content + "<h3>#" + msg.entities.hashtags[i].text + "</h3>";
+            }
+        
+        
+        content = content + '</div><div class="item"> <img src="' + msg.thumb_url + '"> </div> \
+            <div class="item"> <h1>Heads up!</h1></div> \
+          </div> \
+         </div>';
+         return $(content);
+    
+        
+    }
+    
+    function popoverMove(direction) {
+        var res = $('#stream').children('.active');
+        var pop = $('#stream').children('.popover');
+        var car = pop.find('.carousel');
+        car.carousel(direction);
+    }
+    
+    function addEntryToDisplay()
+    {
+    
+        var content = $('#stream').children('.popover').find('.carousel-inner').children('.active');
+        //console.log(content);
+        
+        var inner = $("#display").children('.carousel-inner');
+        
+        var clone = content.clone();
+        clone.removeClass("active");
+        
+        console.log(clone);
+        
+        var labels = $("#display").children('.carousel-indicators');
+        console.log(labels.length);
+        
+        var entrylabel = $("<li data-target='#display' data-slide-to='" + labels.length + "'></li>");
+        labels.append(entrylabel);
+        
+        inner.append(clone);
+    }
+    
+    function remove() {
+        var inner = $("#display").children('.carousel-inner').children('.active');
+        var labels = $("#display").children('.carousel-indicators').children('.active');
+        
+        if (labels.attr('data-slide-to') != 0) {
+            inner.removeClass("active");
+            labels.removeClass("active");
+            
+            if (inner.next().length > 0) {
+                inner.next().addClass("active");
+                labels.next().addClass("active");
+                labels.next().attr('data-slide-to', labels.attr('data-slide-to'));
+            }
+            
+            $("#display").carousel('next');
+            
+            inner.remove();
+            labels.remove();
+        } else {
+            console.log("can't remove data dj!");
+        }
+        
+    }
+    
+    function down() {
+         console.log("down ");
+        var current = getCurrentPosition();
+        if (current != (getSelectedSource().length - (1+HIGHLIGHT_POS))) {
+            incPos();
+            render();
+        }
+    }
+    
+    function up() {
+        console.log("up ")
+        var current = getCurrentPosition();
+        if (current != (0 - HIGHLIGHT_POS)) {
+            decPos();
+            render();     
+        }         
+    }
+    
+    
+    $(document).ready(function () {
+        console.log("ready!");
+    
+        
+        $("#searchform").submit(function() {
+            var val = $("#searchbox").val();
+            load(val);
+            event.preventDefault();
+        })
+        
+        $(document).keydown(function (event) {
+            
+            if ($("#searchbox").is(":focus")) {
+                return;
+            }
+            
+            console.log(event.which);
+            
+            
+            if (event.which == 40) {
+               down();
+               
+            }
+            
+            if (event.which == 38) {
+                up();   
+            }
+            
+            if (event.which == 72) {
+                toggleHighlightMode();
+                highlight();
+            }
+            
+            if (event.which == 39) {
+                popoverMove('next');
+            }
+            if (event.which == 37) {
+                popoverMove('prev');
+            }
+            
+            if (event.which==83) {
+               addEntryToDisplay();
+            }
+            
+            if (event.which==80) {
+                $("#display").carousel('pause');
+            }
+            if (event.which==67) {
+                $("#display").carousel('cycle');
+            }
+            if (event.which==82) {
+                remove();
+            }
+            if (event.which==50) {
+                goToNextSource();
+            }
+            
+            event.preventDefault();
+        });
+    });
+    
+    
+     
+  </script>
+
+<div class="container-fluid">
+  <div id="content" class="row-fluid">
+    <div class="row-fluid">
+        <div class="span6">
+        <ul class="inline" id="sources">
+        </ul>
+        </div>
+        <div class="span6">
+            <form id="searchform" class="form-search pull-right">
+                <input id="searchbox" type="text" class="input-medium search-query">
+                <button type="submit" class="btn"><i class="icon-search"></i></button>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row-fluid">
+        <div class="span7">
+        <ul id="stream" class="nav nav-pills nav-stacked">
+    
+        </ul>
+    </div>
+        <div class="span5"> 
+            <div id="display" style="border: 1px solid #ddd;
+                                    -webkit-border-radius: 4px;
+                                    -moz-border-radius: 4px;
+                                    border-radius: 4px;" 
+                              class="carousel slide">
+                <ol class="carousel-indicators">
+                    <li data-target='#display' data-slide-to='0' class='active'></li>
+                    
+                </ol> 
+                <div class="carousel-inner" style="height:300px;">
+                    <div class='active item'><H1>Data DJ</h1> </div>
+                    
+                </div>
+
+             </div>
+        </div>
+   </div>
+</div>  
+
+  
+</body>
+</html>
