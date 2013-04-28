@@ -27,6 +27,8 @@
     var src_string_to_icon_id = {};
     var src_string_to_icon_id_num = 0;
     
+    var stats_track = {'tweets' : 0, 'users' : 0, 'hashtags' : 0, 'images' : 0, 'websites' : 0};
+    
     
     function load(string) {
        
@@ -53,6 +55,9 @@
     
     var buildup = 0;
     var builddown = 0;
+    var buildnext = 0;
+    var buildprev = 0;
+    
     // log all midi events for all devices
     devices.on('midi', function(msg) {
         console.log('got midi', msg);
@@ -109,13 +114,31 @@
         }
         
         //large  wheel left
+       
         if (msg[1] == 24) {
             if (msg[2] > 100) {
-                popoverMove('prev');
+                if (buildprev > 4){
+                    console.log(buildprev);
+                    popoverMove('prev');
+                    buildprev = 0;
+                } else {
+                    buildprev = buildprev + 1;
+                    console.log(buildprev);
+                }
             } else {
-              popoverMove('next');
+                if (buildnext > 4)  {
+                    popoverMove('next');
+                    buildnext = 0;
+                } else {
+                    buildnext = buildnext + 1;
+                }
             }
         }  
+        
+        if (msg[1] == 9) {
+            var num = (msg[2] + 1);
+            setDisplayTiming(num);
+        }
             
     });
   
@@ -170,11 +193,11 @@
     }
     
     function incPos()  {
-        return srcPosition[selected_source] = srcPosition[selected_source] + 1;
+        return srcPositions[selected_source] = srcPositions[selected_source] + 1;
     }
     
     function decPos()  {
-        return srcPosition[selected_source] = srcPosition[selected_source] - 1;
+        return srcPositions[selected_source] = srcPositions[selected_source] - 1;
     }
     
     function goToNextSource() {
@@ -190,6 +213,16 @@
        $("#" + src_string_to_icon_id[selected_source]).addClass('label-success');
        render();
     }
+    
+    function setDisplayTiming(milliseconds) {
+        var options = {};
+        options['interval'] = milliseconds;
+        $('#display').carousel(options);
+        $('#display').carousel('cycle');
+        console.log(milliseconds);
+    }
+    
+    
     
     function render() {
     
@@ -238,22 +271,49 @@
     function contentExtractor(msg) {
         var divid = "popover" + msg.id_str;
         
+        var media = []
+        if (msg.entities.hasOwnProperty('media')) {
+            for (var i = 0, len = msg.entities.media.length; i < len; i++) {
+                if (msg.entities.media[i].type == 'photo') {
+                    media.push(msg.entities.media[i].media_url);
+                }
+            }
+        }
+        
         var content = '<div id="' + divid + '" data-interval="false" class="carousel slide"> \
           <ol class="carousel-indicators"> \
             <li data-target="#' + divid + '" data-slide-to="0" class="active"></li> \
             <li data-target="#' + divid + '" data-slide-to="1" class="active"></li> \
-          </ol>';
+            <li data-target="#' + divid + '" data-slide-to="2" class="active"></li> \
+            <li data-target="#' + divid + '" data-slide-to="3" class="active"></li>\
+             <li data-target="#' + divid + '" data-slide-to="4" class="active"></li>'
+            for (var i = 0, len = media.length; i < len; i++) {
+                 content = content + '<li data-target="#' + divid + '" data-slide-to="' + (5+i) + 'class="active"></li>';
+            }
             
-        content = content + '<div class="carousel-inner"> <div class="item active">';
+        content = content + '</ol>';
+            
+        content = content + '<div class="carousel-inner"> <div type="hashtag" hashtag-num="'+  msg.entities.hashtags.length + '"class="item active">';
             for (var i = 0, len = msg.entities.hashtags.length; i < len; i++) {
                 content = content + "<h3>#" + msg.entities.hashtags[i].text + "</h3>";
             }
+        content = content + '</div>';
         
+        content = content + "<div type='tweet' class='item'><h4>#" + msg.text + "</h4></div>";
+        content = content + "<div type='user' class='item'> \
+                                <div class='media'> \
+                                    <img class='pull-left media-object' src='" + msg.user.profile_image_url + "'> \
+                                    <div class='media-head'>" + msg.user.name + "</div> \
+                                    <div class='media-body'>" + msg.user.description + "</div>\
+                                </div></div>";
+        content = content + '<div type="website" class="item"> <img src="' + msg.thumb_url + '"> </div>';
+        content = content + '<div class="item"> <h1>Heads up!</h1></div>';
+            
+            for (var i = 0, len = media.length; i < len; i++) {
+                content = content + '<div type="image" class="item"> <img src="' + media[i] + '"> </div>';
+            }
         
-        content = content + '</div><div class="item"> <img src="' + msg.thumb_url + '"> </div> \
-            <div class="item"> <h1>Heads up!</h1></div> \
-          </div> \
-         </div>';
+         content = content + ' </div></div>';
          return $(content);
     
         
@@ -268,7 +328,6 @@
     
     function addEntryToDisplay()
     {
-    
         var content = $('#stream').children('.popover').find('.carousel-inner').children('.active');
         //console.log(content);
         
@@ -278,6 +337,31 @@
         clone.removeClass("active");
         
         console.log(clone);
+        
+        var type = clone.attr('type');
+        if (type != undefined) {
+            if (type == 'user') {
+                stats_track['users'] = stats_track['users'] + 1;
+                $('#users-num').text("" + stats_track['users']);
+            }
+            if (type == 'image') {
+                stats_track['images'] = stats_track['images'] + 1;
+                $('#images-num').text("" + stats_track['images']);
+            }
+            if (type == 'hashtag') {
+                var n = clone.attr('hashtag-num');
+                stats_track['hashtags'] = stats_track['hashtags'] + parseInt(n);
+                $('#tags-num').text("" + stats_track['hashtags']);
+            }
+            if (type == 'tweet') {
+                stats_track['tweets'] = stats_track['tweets'] + 1;
+                $('#tweets-num').text("" + stats_track['tweets']);
+            }
+            if (type == 'website') {
+                stats_track['websites'] = stats_track['websites'] + 1;
+                $('#websites-num').text("" + stats_track['websites']);
+            }
+        }
         
         var labels = $("#display").children('.carousel-indicators');
         console.log(labels.length);
@@ -306,6 +390,30 @@
             
             inner.remove();
             labels.remove();
+            
+            var type = inner.attr('type');
+            if (type != undefined) {
+                if (type == 'user') {
+                    stats_track['users'] = stats_track['users'] - 1;
+                    $('#users-num').text("" + stats_track['users']);
+                }
+                if (type == 'image') {
+                    stats_track['images'] = stats_track['images'] - 1;
+                    $('#images-num').text("" + stats_track['images']);
+                }
+                if (type == 'hashtag') {
+                    stats_track['hashtags'] = stats_track['hashtags'] - 1;
+                    $('#tags-num').text("" + stats_track['hashtags']);
+                }
+                if (type == 'tweet') {
+                    stats_track['tweets'] = stats_track['tweets'] - 1;
+                    $('#tweets-num').text("" + stats_track['tweets']);
+                }
+                if (type == 'website') {
+                    stats_track['websites'] = stats_track['websites'] - 1;
+                    $('#websites-num').text("" + stats_track['websites']);
+                }
+        }
         } else {
             console.log("can't remove data dj!");
         }
@@ -433,6 +541,13 @@
                     
                 </div>
 
+             </div>
+             <div id="stats">
+                <i class="icon-picture"></i><div id="imgs-num" class="badge badge-inverse">0</div>
+                <i class="icon-user"></i><div id="users-num" class="badge badge-inverse">0</div>
+                <i class="icon-tags"></i><div id="tags-num" class="badge badge-inverse">0</div>
+                <i class="icon-file"></i><div id="websites-num" class="badge badge-inverse">0</div>
+                <i class="icon-star"></i><div id="tweets-num" class="badge badge-inverse">0</div>
              </div>
         </div>
    </div>
